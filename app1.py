@@ -256,39 +256,51 @@ if uploaded_file:
             else:
                 st.warning(f"⚠️ Score: {score}/100 — Improvements recommended. Generating page-wise suggestions...")
 
+
+                tabs = st.tabs([f"Page {page_num}" for page_num in page_texts.keys()])
                 page_summaries = []
 
-                for page_num, original in page_texts.items():
+                for idx, page_num in enumerate(page_texts.keys()):
+                    original = page_texts[page_num]
                     if not original.strip():
                         continue
 
                     improve_instructions = (
-                        "You are a meticulous legal writing assistant. Silently apply the 15 Legal Writing Guidelines to evaluate and improve the following text. "
-                        "Use internal reasoning, but do not display your thought process.\n\n"
-                        "Focus on:\n"
-                        "• Concise, direct language (remove redundancies, simplify phrases, eliminate legalese)\n"
-                        "• Active voice and clear verb use\n"
-                        "• Shorter, well-structured sentences and logically focused paragraphs\n"
-                        "• A professional, precise, and confident tone throughout\n"
-                        "• Legal integrity—preserve the original legal meaning at all times\n\n"
-                        "Output only:\n"
-                        "1. The final, revised version of the text—polished and professional\n"
-                        "2. A brief summary of the key improvements applied"
-                        )          
+                    "You are a meticulous legal writing assistant. Silently apply the 15 Legal Writing Guidelines to evaluate and improve the following text. "
+                    "Use internal reasoning, but do not display your thought process.\n\n"
+                    "Focus on:\n"
+                    "• Concise, direct language (remove redundancies, simplify phrases, eliminate legalese)\n"
+                    "• Active voice and clear verb use\n"
+                    "• Shorter, well-structured sentences and logically focused paragraphs\n"
+                    "• A professional, precise, and confident tone throughout\n"
+                    "• Legal integrity—preserve the original legal meaning at all times\n\n"
+                    "Output only:\n"
+                    "1. The final, revised version of the text—polished and professional\n"
+                    "2. A brief summary of the key improvements applied"
+                    )
+
                     improved = run_assistant(original, improve_instructions)
 
-                    st.markdown(f"### 📄 Improved Text — Page {page_num}")
-                    st.text_area(label=f"Page {page_num}", value=improved, height=300, key=f"page_{page_num}")
+                    with tabs[idx]:
+                        st.markdown(f"### 🧾 Page {page_num} Comparison")
+                        col1, col2 = st.columns(2)
 
-                    word_changes = get_word_changes(original, improved)
-                    if word_changes:
-                        summary = f"Page {page_num}:\n" + "\n".join(f"- {change}" for change in word_changes)
-                    else:
-                        summary = f"Page {page_num}: No changes detected."
+                        with col1:
+                            st.subheader("📄 Original Text")
+                            st.text_area(label="", value=original, height=300, key=f"original_{page_num}")
 
-                    page_summaries.append(summary)
+                        with col2:
+                            st.subheader("✅ Improved Text")
+                            st.text_area(label="", value=improved, height=300, key=f"improved_{page_num}")
 
-                st.subheader("📌 Summary of Word-Level Changes")
-                st.markdown("\n\n".join(page_summaries))
-                
-                #st.success("✅ All pages processed successfully.")
+                        with st.expander("🔍 Word-Level Changes"):
+                            word_changes = get_word_changes(original, improved)
+                            if word_changes:
+                                summary = f"Page {page_num}:\n" + "\n".join(f"- {change}" for change in word_changes)
+                                st.markdown(summary)
+                            else:
+                                summary = f"Page {page_num}: No changes detected."
+                                st.markdown(summary)
+
+                        page_summaries.append(summary)
+        

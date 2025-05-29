@@ -8,7 +8,7 @@ import difflib
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # Load .env variables into environment
+load_dotenv()  
 
 api_key = os.getenv("API_KEY")
 endpoint = os.getenv("ENDPOINT")
@@ -21,12 +21,11 @@ logging.basicConfig(level=logging.INFO)
 
 
 
-# Sidebar debug info
+
 st.sidebar.title("🔧 Debug Info")
 st.sidebar.write("✅ API Key Loaded:", bool(api_key))
 st.sidebar.write("✅ Endpoint Loaded:", bool(endpoint))
 
-# Initialize Azure OpenAI client
 client = AzureOpenAI(
     api_key=api_key,
     azure_endpoint=endpoint,
@@ -191,21 +190,20 @@ def highlight_differences(original, improved):
 
     for line in diff:
         if line.startswith("  "):
-            # Unchanged
+      
             highlighted_lines.append(line[2:])
         elif line.startswith("- "):
-            # Removed text - show with red background and strike-through
+          
             highlighted_lines.append(f'<del style="background-color:#faa;">{line[2:]}</del>')
         elif line.startswith("+ "):
-            # Added text - highlight in yellow
+       
             highlighted_lines.append(f'<span style="background-color: #fffb91;">{line[2:]}</span>')
         elif line.startswith("? "):
-            # Detail markers from difflib, skip these
             pass
 
     return "<br>".join(highlighted_lines)
 
-# Main UI
+
 st.title("📚 Legal Writing Assistant")
 st.markdown("Upload a legal document (.docx or .pdf) and the system will evaluate and improve your legal writing, highlighting exactly where changes were made.")
 
