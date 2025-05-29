@@ -8,6 +8,7 @@ import docx
 import difflib
 from dotenv import load_dotenv
 import re
+import base64
 
 def get_word_changes(original, improved):
     original_words = re.findall(r'\w+|\W', original)
@@ -41,9 +42,84 @@ endpoint = os.getenv("ENDPOINT")
 st.set_page_config(page_title="Legal Writing Assistant", layout="wide")
 logging.basicConfig(level=logging.INFO)
 
-st.sidebar.title("🔧 Debug Info")
-st.sidebar.write("✅ API Key Loaded:", bool(api_key))
-st.sidebar.write("✅ Endpoint Loaded:", bool(endpoint))
+st.markdown(
+    """
+    <style>
+    /* Make the sidebar background transparent */
+    section[data-testid="stSidebar"] {
+        background-color: rgba(0, 0, 0, 0.5);  /* Semi-transparent black */
+        color: white;
+    }
+
+    /* Adjust sidebar text */
+    .sidebar-content {
+        padding: 1rem;
+        font-size: 0.9rem;
+        color: white;
+    }
+
+    /* Optional: make widgets like checkboxes, uploaders more visible */
+    section[data-testid="stSidebar"] .stButton>button, 
+    section[data-testid="stSidebar"] .stFileUploader, 
+    section[data-testid="stSidebar"] .stCheckbox {
+        background-color: rgba(255,255,255,0.1);
+        color: white;
+    }
+
+    /* Tweak scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+    ::-webkit-scrollbar-thumb {
+        background-color: #999; 
+        border-radius: 4px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+with st.sidebar:
+    st.markdown("### How to Use the App")
+    st.markdown("""
+    1. **Upload a legal document** (PDF or DOCX).  
+    2. Wait for the app to process your file.  
+    3. Review the **suggestions and improvements** shown on screen.  
+    4. You can re-upload a new file anytime.  
+
+    ---
+    ✅ Supports `.pdf` and `.docx`  
+    ✅ Max size: **200MB**  
+    ✅ Private and secure  
+    """)
+
+    st.success("API Key Loaded: ✅", icon="🔑")
+    st.success("Endpoint Loaded: ✅", icon="🌐")
+
+
+#BG
+
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+bg_image = get_base64_image("bg.jpg")
+
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background-image: url("data:image/jpg;base64,{bg_image}");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center;
+    }}
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version="2024-02-15-preview")
 
@@ -166,6 +242,7 @@ def run_assistant(prompt, task_instructions):
             return "⚠️ No assistant response found."
         else:
             return f"❌ Run failed with status: {run_status.status}"
+            #TypeError: expected string or bytes-like object, got 'NoneType'
     except Exception as e:
         logging.error("Assistant error", exc_info=True)
         return f"🚨 Error: {str(e)}"
@@ -229,6 +306,7 @@ if uploaded_file:
 
         if st.button("🧮 Evaluate and Improve"):
             full_text = "\n\n".join(page_texts.values())
+            #AGENT 1 FOR EVALUATING
             with st.spinner("Evaluating your legal writing..."):
                 evaluation = run_assistant(full_text, 
                 """You are a legal writing evaluator. Assess the following text using the 15 Legal Writing Guidelines as your sole standard. 
@@ -260,6 +338,7 @@ if uploaded_file:
                 tabs = st.tabs([f"Page {page_num}" for page_num in page_texts.keys()])
                 page_summaries = []
 
+                #AGENT 2 FOR IMPROVEMENTS
                 for idx, page_num in enumerate(page_texts.keys()):
                     original = page_texts[page_num]
                     if not original.strip():
@@ -303,4 +382,6 @@ if uploaded_file:
                                 st.markdown(summary)
 
                         page_summaries.append(summary)
-        
+#END OF THE CODE       
+
+
