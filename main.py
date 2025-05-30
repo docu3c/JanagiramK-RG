@@ -357,9 +357,9 @@ if st.session_state.get("show_improvements"):
 
             with col2:
                 st.subheader("✅ Improved Text")
+                st.text_area(label="", value=improved.strip(), height=2000, key=f"improved_{page_num}")
                 if f"improved_{page_num}" not in st.session_state:
                     st.session_state[f"improved_{page_num}"] = improved.strip()
-                st.text_area(label="", value=improved.strip(), height=2000, key=f"improved_{page_num}")
 
             with st.expander("🔍 Word-Level Changes"):
                 word_changes = get_word_changes(original, improved)
