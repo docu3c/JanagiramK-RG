@@ -353,7 +353,8 @@ if st.session_state.get("show_improvements"):
 
             with col1:
                 st.subheader("📄 Original Text")
-                st.text_area(label="", value=format_original.strip(), height=2000, key=f"original_{page_num}")
+                cleaned_original = re.sub(r'(\*\*|__|##+)', '', format_original)
+                st.text_area(label="", value=cleaned_original.strip(), height=2000, key=f"original_{page_num}")
 
             with col2:
                 st.subheader("✅ Improved Text")
