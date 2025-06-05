@@ -1,33 +1,39 @@
-# IMPORTS
+# --- UTILITIES ---
 
-import os
-import time
-import logging
-import streamlit as st
-from openai import AzureOpenAI
-from PyPDF2 import PdfReader
-import docx
-import difflib
-from dotenv import load_dotenv
 import re
-from io import BytesIO
+import difflib
 
-# UTILITIES
-def get_word_changes(original, improved):
-    original_words = re.findall(r'\w+|\W', original)
-    improved_words = re.findall(r'\w+|\W', improved)
+
+def get_word_changes(original: str, improved: str) -> list[str]:
+    """
+    Compute word-level changes between original and improved texts.
+    Returns a list of human-readable change descriptions.
+    """
+    original_words = re.findall(r"\w+|\W", original)
+    improved_words = re.findall(r"\w+|\W", improved)
+
     sm = difflib.SequenceMatcher(None, original_words, improved_words)
     changes = []
-    for opcode, i1, i2, j1, j2 in sm.get_opcodes():
-        if opcode == 'replace':
-            changes.append(f'"{"".join(original_words[i1:i2])}" → "{"".join(improved_words[j1:j2])}"')
-        elif opcode == 'delete':
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "replace":
+            changes.append(
+                f'"{"".join(original_words[i1:i2])}" → '
+                f'"{"".join(improved_words[j1:j2])}"'
+            )
+        elif tag == "delete":
             changes.append(f'Removed: "{"".join(original_words[i1:i2])}"')
-        elif opcode == 'insert':
+        elif tag == "insert":
             changes.append(f'Added: "{"".join(improved_words[j1:j2])}"')
+
     return changes
 
-def parse_score_from_evaluation(evaluation_text):
+
+def parse_score_from_evaluation(evaluation_text: str) -> int | None:
+    """
+    Extract a numeric score (0-100) from the evaluation text.
+    Returns None if no valid score found.
+    """
     match = re.search(r"score\s*[:\-]?\s*(\d{1,3})", evaluation_text, re.IGNORECASE)
     if match:
         score = int(match.group(1))
@@ -35,33 +41,37 @@ def parse_score_from_evaluation(evaluation_text):
             return score
     return None
 
-def highlight_differences(original, improved):
-    differ = difflib.Differ()
-    diff = list(differ.compare(original.splitlines(), improved.splitlines()))
-    highlighted = []
-    for line in diff:
-        if line.startswith("  "):
-            highlighted.append(line[2:])
-        elif line.startswith("- "):
-            highlighted.append(f'<del style="background-color:#faa;">{line[2:]}</del>')
-        elif line.startswith("+ "):
-            highlighted.append(f'<span style="background-color: #fffb91;">{line[2:]}</span>')
-    return "<br>".join(highlighted)
 
-# LOAD ENVIRONMENT VARIABLES
+# --- ENVIRONMENT SETUP ---
+
+import os
+from dotenv import load_dotenv
 
 load_dotenv()
-api_key = os.getenv("API_KEY")
-endpoint = os.getenv("ENDPOINT")
+API_KEY = os.getenv("API_KEY")
+ENDPOINT = os.getenv("ENDPOINT")
 
-# STREAMLIT SETUP
+
+# --- STREAMLIT SETUP ---
+
+import streamlit as st
+import logging
 
 st.set_page_config(page_title="Legal Writing Assistant", layout="wide")
 logging.basicConfig(level=logging.INFO)
 
-# AZURE OPENAI CLIENT
 
-client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version="2024-02-15-preview")
+# --- AZURE OPENAI CLIENT SETUP ---
+
+from openai import AzureOpenAI
+import time
+
+client = AzureOpenAI(
+    api_key=API_KEY,
+    azure_endpoint=ENDPOINT,
+    api_version="2024-02-15-preview",
+)
+
 
 @st.cache_resource
 def create_assistant():
@@ -69,27 +79,34 @@ def create_assistant():
         name="Legal Writing Assistant",
         instructions="You are a legal writing coach for law firm associates.",
         tools=[],
-        model="gpt-4o"
+        model="gpt-4o",
     )
 
-logging.basicConfig(level=logging.INFO)
 
-def run_assistant(prompt, task_instructions, max_retries=3):
+def run_assistant(prompt: str, task_instructions: str, max_retries: int = 3) -> str:
+    """
+    Run the Azure OpenAI assistant with retries for rate limiting.
+    Returns the assistant's response or an error message.
+    """
     retries = 0
     while retries < max_retries:
         try:
             assistant = create_assistant()
             thread = client.beta.threads.create()
-            client.beta.threads.messages.create(thread_id=thread.id, role="user", content=prompt)
+            client.beta.threads.messages.create(
+                thread_id=thread.id, role="user", content=prompt
+            )
 
             run = client.beta.threads.runs.create(
                 thread_id=thread.id,
                 assistant_id=assistant.id,
-                instructions=task_instructions + "\n\n" + LEGAL_WRITING_GUIDELINES
+                instructions=task_instructions + "\n\n" + LEGAL_WRITING_GUIDELINES,
             )
 
             while True:
-                run_status = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread.id, run_id=run.id
+                )
                 if run_status.status in ["completed", "failed", "cancelled", "expired"]:
                     break
                 time.sleep(1)
@@ -98,32 +115,49 @@ def run_assistant(prompt, task_instructions, max_retries=3):
                 messages = client.beta.threads.messages.list(thread_id=thread.id)
                 for msg in reversed(list(messages)):
                     if msg.role == "assistant":
-                        return msg.content[0].text.value
+                        try:
+                            return msg.content[0].text.value
+                        except (AttributeError, IndexError, TypeError) as ex:
+                            logging.warning(
+                                f"Failed to extract assistant response: {ex}"
+                            )
+                            continue
                 return "⚠️ No assistant response found."
 
             if run_status.status == "failed":
-                if hasattr(run_status, "last_error") and run_status.last_error:
-                    if run_status.last_error.code == "rate_limit_exceeded":
-                        wait_time = 10  # or parse from error message if possible
-                        logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds before retrying...")
+                last_error = getattr(run_status, "last_error", None)
+                if last_error:
+                    if last_error.code == "rate_limit_exceeded":
+                        wait_time = 10
+                        logging.warning(
+                            f"Rate limit exceeded. Waiting {wait_time} seconds..."
+                        )
                         time.sleep(wait_time)
                         retries += 1
-                        continue  # retry the whole operation
-                    else:
-                        return f"❌ Run failed: {run_status.last_error.code} - {run_status.last_error.message}"
-                else:
-                    return f"❌ Run failed with unknown error."
-            else:
-                return f"❌ Run status: {run_status.status}"
+                        continue
+                    return f"❌ Run failed: {last_error.code} - {last_error.message}"
+                return "❌ Run failed with unknown error."
+
+            return f"❌ Run status: {run_status.status}"
 
         except Exception as e:
-            logging.exception("🚨 Exception occurred during assistant execution.")
-            return f"🚨 Exception occurred: {str(e)}"
-    return "❌ Max retries reached due to rate limits. Please try again later."
-    
-# FILE PARSING LOGIC
+            logging.exception("🚨 Exception during assistant execution.")
+            return f"🚨 Exception occurred: {e}"
 
-def extract_text_and_metadata(file):
+    return "❌ Max retries reached due to rate limits. Please try again later."
+
+
+# --- FILE PARSING LOGIC ---
+
+import docx
+from PyPDF2 import PdfReader
+
+
+def extract_text_and_metadata(file) -> tuple[dict, dict]:
+    """
+    Extract metadata and text by page from PDF or DOCX files.
+    Returns (metadata_dict, page_texts_dict).
+    """
     metadata_cleaned = {}
     page_texts = {}
 
@@ -132,6 +166,7 @@ def extract_text_and_metadata(file):
             reader = PdfReader(file)
             raw_metadata = reader.metadata or {}
             metadata_cleaned = {k.lstrip("/"): v for k, v in raw_metadata.items() if v}
+
             for i, page in enumerate(reader.pages):
                 try:
                     text = page.extract_text()
@@ -140,9 +175,14 @@ def extract_text_and_metadata(file):
                 except Exception as e:
                     logging.warning(f"Failed to read Page {i+1}: {e}")
 
-        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        elif (
+            file.type
+            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ):
             doc = docx.Document(file)
             paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+
+            # Group paragraphs into pages by character limit for better chunking
             page_char_limit = 800
             current_page, current_length, page_num = [], 0, 1
 
@@ -170,7 +210,8 @@ def extract_text_and_metadata(file):
 
     return metadata_cleaned, page_texts
 
-# 15 GUIDELINES
+
+# --- LEGAL WRITING GUIDELINES ---
 
 LEGAL_WRITING_GUIDELINES = """
 LEGAL WRITING GUIDELINES
@@ -255,32 +296,42 @@ Ask: What’s the clearest, most supportable legal position?
 Apply these principles with precision and discipline. The reader should see only clear, confident legal writing. Your thoughtful process should be invisible—but your mastery, unmistakable.
 """
 
-# USER INTERFACE
+
+# --- USER INTERFACE SETUP ---
 st.title("Legal Writing Assistant")
 
-# INPUT MODE SELECTION
-st.sidebar.markdown("### 🔍 Select Input Mode")
-input_mode = st.sidebar.radio("Choose how you want to provide the document:", ["Upload Document", "Paste Text"])
-page_texts = {}
-input_source = None
+# Initialize session state if not already
+if "page_texts" not in st.session_state:
+    st.session_state.page_texts = {}
+if "input_source" not in st.session_state:
+    st.session_state.input_source = None
 
-if input_mode == "Upload Document":
-    uploaded_file = st.sidebar.file_uploader("📁 Upload a legal document (.docx or .pdf)", type=["pdf", "docx"])
-    if uploaded_file:
-        metadata, page_texts = extract_text_and_metadata(uploaded_file)
-        input_source = "document"
-elif input_mode == "Paste Text":
-    pasted_text = st.sidebar.text_area("✍️ Paste your legal text here", height=400)
-    if pasted_text.strip():
-        page_texts = {"Page 1": pasted_text.strip()}
-        input_source = "text"
-    else:
-        page_texts = {}
-        input_source = None
-else:
-    input_source = None
+# Sidebar uploader
+st.sidebar.markdown("### 📁 Upload Document")
+uploaded_file = st.sidebar.file_uploader(
+    "Upload a legal document (.docx or .pdf)",
+    type=["pdf", "docx"],
+    label_visibility="collapsed",
+)
 
-# DOCUMENT OR TEXT PROCESSING SECTION
+# Handle uploaded document
+if uploaded_file:
+    metadata, page_texts = extract_text_and_metadata(uploaded_file)
+    st.session_state.page_texts = page_texts
+    st.session_state.input_source = "document"
+
+# Chat input at bottom
+user_input = st.chat_input("Paste your legal text here", key="chat_input")
+
+if user_input and user_input.strip():
+    st.session_state.page_texts = {"Page 1": user_input.strip()}
+    st.session_state.input_source = "text"
+
+# Use the stored version
+page_texts = st.session_state.page_texts
+input_source = st.session_state.input_source
+
+# Display info
 if page_texts:
     total_pages = len(page_texts)
     st.sidebar.markdown(f"- **Total Pages**: {total_pages}")
@@ -289,19 +340,24 @@ if page_texts:
         full_text = "\n\n".join(page_texts.values())
 
         with st.spinner("Evaluating your legal writing..."):
-            evaluation = run_assistant(full_text, 
-                """You are a legal writing evaluator. Assess the following text using the 15 Legal Writing Guidelines as your sole standard. 
-                Assign a final score from 0 to 100 reflecting the overall quality of legal writing.
-                Then provide concise, bullet-point feedback grouped by:
-                - Strengths
-                - Weaknesses
-                - Actionable Suggestions
-                Format:
-                Score: XX
-                - Strength: ...
-                - Weakness: ...
-                - Suggestion: ...
-                """
+            evaluation = run_assistant(
+                full_text,
+                (
+                    "You are a legal writing evaluator. Your task is to evaluate ONLY legal writing. "
+                    "If the input does not appear to be legal writing (e.g., casual text, fiction, code, general information), "
+                    "respond with: 'The input does not appear to be legal writing and will not be evaluated.'\n\n"
+                    "If the input is legal in nature, assess it strictly based on the 15 Legal Writing Guidelines. "
+                    "Assign a final score from 0 to 100 reflecting the overall quality of legal writing.\n\n"
+                    "Then provide concise, bullet-point feedback grouped by:\n"
+                    "- Strengths\n"
+                    "- Weaknesses\n"
+                    "- Actionable Suggestions\n\n"
+                    "Format:\n"
+                    "Score: XX\n"
+                    "- Strength: ...\n"
+                    "- Weakness: ...\n"
+                    "- Suggestion: ..."
+                ),
             )
 
         score = parse_score_from_evaluation(evaluation)
@@ -309,17 +365,19 @@ if page_texts:
         if score is None:
             st.warning("⚠️ Could not detect score.")
         elif score >= 95:
-            st.success(f"✅ Score: {score}/100 — Your writing is strong. No improvement needed.")
+            st.success(
+                f"✅ Score: {score}/100 — Your writing is strong. No improvement needed."
+            )
         else:
             st.warning(f"⚠️ Score: {score}/100 — Improvements recommended.")
             st.session_state["show_improvements"] = True
-            st.session_state["page_texts"] = page_texts
 
-# TEXT IMPROVING SECTION
+
+# --- TEXT IMPROVEMENT SECTION ---
+
 if st.session_state.get("show_improvements"):
     page_texts = st.session_state["page_texts"]
     tabs = st.tabs([f"{page}" for page in page_texts.keys()])
-    summaries = []
 
     for idx, page_num in enumerate(page_texts.keys()):
         original = page_texts[page_num]
@@ -354,54 +412,71 @@ if st.session_state.get("show_improvements"):
 
             with col1:
                 st.subheader("📄 Original Text")
-                cleaned_original = re.sub(r'(\*\*|__|##+)', '', format_original)
-                st.text_area("", value=cleaned_original.strip(), height=2000, key=f"original_{page_num}")
+                cleaned_original = re.sub(r"(\*\*|__|##+)", "", format_original)
+                st.text_area(
+                    "",
+                    value=cleaned_original.strip(),
+                    height=2000,
+                    key=f"original_{page_num}",
+                )
 
             with col2:
                 st.subheader("✅ Improved Text")
-                st.text_area("", value=improved.strip(), height=2000, key=f"improved_{page_num}")
+                st.text_area(
+                    "", value=improved.strip(), height=2000, key=f"improved_{page_num}"
+                )
                 if f"improved_{page_num}" not in st.session_state:
                     st.session_state[f"improved_{page_num}"] = improved.strip()
 
             with st.expander("🔍 Word-Level Changes"):
                 word_changes = get_word_changes(original, improved)
                 if word_changes:
-                    summary = f"Page {page_num}:\n" + "\n".join(f"- {c}" for c in word_changes)
+                    summary = f"Page {page_num}:\n" + "\n".join(
+                        f"- {c}" for c in word_changes
+                    )
                     st.markdown(summary)
                 else:
                     st.markdown(f"Page {page_num}: No changes detected.")
 
-            summaries.append(summary)
 
-    st.session_state["all_pages_processed"] = True
+# --- DOCX EXPORT SECTION ---
 
-# WORD DOCUMENT DOWNLOADING SECTION
-def create_docx_from_improved_text():
+from io import BytesIO
+
+
+def create_docx_from_improved_text() -> BytesIO:
+    """
+    Create a Word document from the improved texts stored in session state.
+    Returns a BytesIO object of the DOCX file.
+    """
     doc = docx.Document()
     doc.add_heading("Improved Legal Document", level=1)
-    for page_num in st.session_state.get('page_texts', {}).keys():
+
+    for page_num in st.session_state.get("page_texts", {}):
         improved_text = st.session_state.get(f"improved_{page_num}", "")
         if improved_text.strip():
-            lines = improved_text.split('\n')
+            lines = improved_text.split("\n")
             buffer = []
             for line in lines:
                 if line.strip():
                     buffer.append(line.strip())
                 elif buffer:
-                    doc.add_paragraph('\n'.join(buffer))
+                    doc.add_paragraph("\n".join(buffer))
                     buffer = []
             if buffer:
-                doc.add_paragraph('\n'.join(buffer))
+                doc.add_paragraph("\n".join(buffer))
+
     doc_io = BytesIO()
     doc.save(doc_io)
     doc_io.seek(0)
     return doc_io
 
-if st.session_state.get('all_pages_processed', False):
+
+if st.session_state.get("show_improvements") and st.session_state.get("page_texts"):
     docx_io = create_docx_from_improved_text()
     st.sidebar.download_button(
         label="📄 Download Improved Document `.docx`",
         data=docx_io,
         file_name="improved_legal_document.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
