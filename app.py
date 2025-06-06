@@ -150,7 +150,7 @@ def run_assistant(prompt: str, task_instructions: str, max_retries: int = 3) -> 
 # --- FILE PARSING LOGIC ---
 
 import docx
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 
 def extract_text_and_metadata(file) -> tuple[dict, dict]:
