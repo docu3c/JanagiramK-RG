@@ -1,8 +1,19 @@
-# --- UTILITIES ---
+# --- IMPORTS ---
 
+import os
 import re
+import time
+import logging
 import difflib
+import docx
+from io import BytesIO
+from pypdf import PdfReader
+import streamlit as st
+from dotenv import load_dotenv
+from openai import AzureOpenAI
 
+
+# --- UTILITIES ---
 
 def get_word_changes(original: str, improved: str) -> list[str]:
     """
@@ -43,10 +54,6 @@ def parse_score_from_evaluation(evaluation_text: str) -> int | None:
 
 
 # --- ENVIRONMENT SETUP ---
-
-import os
-from dotenv import load_dotenv
-
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 ENDPOINT = os.getenv("ENDPOINT")
@@ -54,17 +61,11 @@ ENDPOINT = os.getenv("ENDPOINT")
 
 # --- STREAMLIT SETUP ---
 
-import streamlit as st
-import logging
-
 st.set_page_config(page_title="Legal Writing Assistant", layout="wide")
 logging.basicConfig(level=logging.INFO)
 
 
 # --- AZURE OPENAI CLIENT SETUP ---
-
-from openai import AzureOpenAI
-import time
 
 client = AzureOpenAI(
     api_key=API_KEY,
@@ -75,13 +76,17 @@ client = AzureOpenAI(
 
 @st.cache_resource
 def create_assistant():
-    return client.beta.assistants.create(
-        name="Legal Writing Assistant",
-        instructions="You are a legal writing coach for law firm associates.",
-        tools=[],
-        model="gpt-4o",
-    )
-
+    try:
+        return client.beta.assistants.create(
+            name="Legal Writing Assistant",
+            instructions="You are a legal writing coach for law firm associates.",
+            tools=[],
+            model="gpt-4o",
+        )
+    except Exception as e:
+        logging.error("Error creating assistant", exc_info=True)
+        st.error("❌ Failed to create assistant.")
+        raise
 
 def run_assistant(prompt: str, task_instructions: str, max_retries: int = 3) -> str:
     """
@@ -148,21 +153,21 @@ def run_assistant(prompt: str, task_instructions: str, max_retries: int = 3) -> 
 
 
 # --- FILE PARSING LOGIC ---
-
-import docx
-from pypdf import PdfReader
-
-
 def extract_text_and_metadata(file) -> tuple[dict, dict]:
-    """
-    Extract metadata and text by page from PDF or DOCX files.
-    Returns (metadata_dict, page_texts_dict).
-    """
     metadata_cleaned = {}
     page_texts = {}
 
     try:
-        if file.type == "application/pdf":
+        # Try to detect file type
+        file_type = getattr(file, "type", None)
+        if not file_type:
+            filename = getattr(file, "name", "").lower()
+            if filename.endswith(".pdf"):
+                file_type = "application/pdf"
+            elif filename.endswith(".docx"):
+                file_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        if file_type == "application/pdf":
             reader = PdfReader(file)
             raw_metadata = reader.metadata or {}
             metadata_cleaned = {k.lstrip("/"): v for k, v in raw_metadata.items() if v}
@@ -175,14 +180,10 @@ def extract_text_and_metadata(file) -> tuple[dict, dict]:
                 except Exception as e:
                     logging.warning(f"Failed to read Page {i+1}: {e}")
 
-        elif (
-            file.type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ):
+        elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = docx.Document(file)
             paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
-            # Group paragraphs into pages by character limit for better chunking
             page_char_limit = 800
             current_page, current_length, page_num = [], 0, 1
 
@@ -201,15 +202,22 @@ def extract_text_and_metadata(file) -> tuple[dict, dict]:
             metadata_cleaned["Author"] = props.author or "Unknown"
 
         else:
-            st.warning("Unsupported file type.")
+            try:
+                import streamlit as st
+                st.warning("Unsupported file type.")
+            except ImportError:
+                logging.warning("Unsupported file type.")
             return {}, {}
 
     except Exception as e:
-        st.error(f"❌ Failed to extract content: {e}")
+        try:
+            import streamlit as st
+            st.error(f"❌ Failed to extract content: {e}")
+        except ImportError:
+            logging.error(f"❌ Failed to extract content: {e}")
         logging.error("File parsing error", exc_info=True)
 
     return metadata_cleaned, page_texts
-
 
 # --- LEGAL WRITING GUIDELINES ---
 
@@ -441,42 +449,41 @@ if st.session_state.get("show_improvements"):
 
 # --- DOCX EXPORT SECTION ---
 
-from io import BytesIO
-
-
 def create_docx_from_improved_text() -> BytesIO:
-    """
-    Create a Word document from the improved texts stored in session state.
-    Returns a BytesIO object of the DOCX file.
-    """
-    doc = docx.Document()
-    doc.add_heading("Improved Legal Document", level=1)
+    try:
+        doc = docx.Document()
+        doc.add_heading("Improved Legal Document", level=1)
 
-    for page_num in st.session_state.get("page_texts", {}):
-        improved_text = st.session_state.get(f"improved_{page_num}", "")
-        if improved_text.strip():
-            lines = improved_text.split("\n")
-            buffer = []
-            for line in lines:
-                if line.strip():
-                    buffer.append(line.strip())
-                elif buffer:
+        for page_num in st.session_state.get("page_texts", {}):
+            improved_text = st.session_state.get(f"improved_{page_num}", "")
+            if improved_text.strip():
+                lines = improved_text.split("\n")
+                buffer = []
+                for line in lines:
+                    if line.strip():
+                        buffer.append(line.strip())
+                    elif buffer:
+                        doc.add_paragraph("\n".join(buffer))
+                        buffer = []
+                if buffer:
                     doc.add_paragraph("\n".join(buffer))
-                    buffer = []
-            if buffer:
-                doc.add_paragraph("\n".join(buffer))
 
-    doc_io = BytesIO()
-    doc.save(doc_io)
-    doc_io.seek(0)
-    return doc_io
+        doc_io = BytesIO()s
+        doc.save(doc_io)
+        doc_io.seek(0)
+        return doc_io
+
+    except Exception as e:
+        logging.error("Failed to create DOCX", exc_info=True)
+        st.error("❌ Could not generate DOCX file.")
+        return BytesIO()
 
 
 if st.session_state.get("show_improvements") and st.session_state.get("page_texts"):
     docx_io = create_docx_from_improved_text()
     st.sidebar.download_button(
         label="📄 Download Improved Document `.docx`",
-        data=docx_io,
+        data=docx_io,a
         file_name="improved_legal_document.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
