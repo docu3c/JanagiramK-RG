@@ -7,7 +7,7 @@ import logging
 import difflib
 import docx
 from io import BytesIO
-from pypdf import PdfReader
+from PyPDF2 import PdfReader
 import streamlit as st
 from dotenv import load_dotenv
 from openai import AzureOpenAI
