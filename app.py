@@ -7,7 +7,7 @@ import logging
 import difflib
 import docx
 from io import BytesIO
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 import streamlit as st
 from dotenv import load_dotenv
 from openai import AzureOpenAI
@@ -468,7 +468,7 @@ def create_docx_from_improved_text() -> BytesIO:
                 if buffer:
                     doc.add_paragraph("\n".join(buffer))
 
-        doc_io = BytesIO()s
+        doc_io = BytesIO()
         doc.save(doc_io)
         doc_io.seek(0)
         return doc_io
@@ -483,7 +483,7 @@ if st.session_state.get("show_improvements") and st.session_state.get("page_text
     docx_io = create_docx_from_improved_text()
     st.sidebar.download_button(
         label="📄 Download Improved Document `.docx`",
-        data=docx_io,a
+        data=docx_io,
         file_name="improved_legal_document.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
